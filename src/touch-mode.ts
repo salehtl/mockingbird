@@ -1,6 +1,7 @@
 // Runs inside the /app iframe. Listens for postMessage from the viewer
 // and toggles touch-simulation: data-touch attribute (drives CSS),
-// a fingertip cursor dot, and touch-action manipulation.
+// a fingertip cursor dot, drag-to-scroll with inertia, and
+// touch-action manipulation.
 //
 // Hover styles are neutralized via a Tailwind `hover:` variant
 // scoped to html:not([data-touch]) — see src/styles/globals.css.
@@ -60,17 +61,161 @@ function installVisuals() {
   window.addEventListener('pointercancel', onUp);
   document.addEventListener('mouseleave', onLeave);
 
+  const dragCleanup = installDragToScroll();
+
   cleanup = () => {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
     document.removeEventListener('mouseleave', onLeave);
+    dragCleanup();
     style.remove();
     dot?.remove();
     dot = null;
     installed = false;
     cleanup = null;
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Drag-to-scroll with inertia.                                              */
+/*  Mouse drag scrolls the nearest scrollable ancestor of the target.        */
+/*  If the drag exceeds DRAG_THRESHOLD px, the subsequent click is swallowed.*/
+/* -------------------------------------------------------------------------- */
+
+const DRAG_THRESHOLD = 5;
+const FRICTION = 0.93;
+const MIN_VELOCITY = 0.4;
+// Form controls should still work as buttons even in touch mode.
+const PASSTHROUGH = 'input, textarea, select, button, a, label, [contenteditable="true"], [data-no-drag]';
+
+function installDragToScroll(): () => void {
+  let active = false;
+  let exceeded = false;
+  let startX = 0;
+  let startY = 0;
+  let lastX = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let vx = 0;
+  let vy = 0;
+  let target: Element | Window | null = null;
+  let rafId = 0;
+
+  function findScrollable(el: Element | null): Element | Window {
+    let cur: Element | null = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const cs = getComputedStyle(cur);
+      const canY = (cs.overflowY === 'auto' || cs.overflowY === 'scroll') && cur.scrollHeight > cur.clientHeight;
+      const canX = (cs.overflowX === 'auto' || cs.overflowX === 'scroll') && cur.scrollWidth > cur.clientWidth;
+      if (canY || canX) return cur;
+      cur = cur.parentElement;
+    }
+    return window;
+  }
+
+  function applyScroll(dx: number, dy: number) {
+    if (target instanceof Window) {
+      target.scrollBy(-dx, -dy);
+    } else if (target) {
+      (target as Element).scrollLeft -= dx;
+      (target as Element).scrollTop -= dy;
+    }
+  }
+
+  function stepInertia() {
+    if (Math.abs(vx) < MIN_VELOCITY && Math.abs(vy) < MIN_VELOCITY) {
+      rafId = 0;
+      return;
+    }
+    applyScroll(vx, vy);
+    vx *= FRICTION;
+    vy *= FRICTION;
+    rafId = requestAnimationFrame(stepInertia);
+  }
+
+  function cancelInertia() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    if (e.button !== 0 || e.pointerType === 'touch') return;
+    const t = e.target as HTMLElement | null;
+    if (t && t.closest(PASSTHROUGH)) return;
+
+    cancelInertia();
+    active = true;
+    exceeded = false;
+    startX = lastX = e.clientX;
+    startY = lastY = e.clientY;
+    lastT = e.timeStamp;
+    vx = vy = 0;
+    target = findScrollable(t);
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!active) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    const dt = Math.max(1, e.timeStamp - lastT);
+    lastX = e.clientX;
+    lastY = e.clientY;
+    lastT = e.timeStamp;
+
+    if (!exceeded && (Math.abs(e.clientX - startX) > DRAG_THRESHOLD || Math.abs(e.clientY - startY) > DRAG_THRESHOLD)) {
+      exceeded = true;
+    }
+
+    if (exceeded) {
+      applyScroll(dx, dy);
+      // px-per-frame velocity (assume 60fps frame = 16ms)
+      vx = (dx / dt) * 16;
+      vy = (dy / dt) * 16;
+      e.preventDefault();
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (!active) return;
+    active = false;
+    if (exceeded) {
+      // swallow the synthetic click that follows
+      const swallow = (ev: Event) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        window.removeEventListener('click', swallow, true);
+      };
+      window.addEventListener('click', swallow, true);
+      // begin inertia if there's meaningful velocity
+      if (Math.abs(vx) > MIN_VELOCITY || Math.abs(vy) > MIN_VELOCITY) {
+        rafId = requestAnimationFrame(stepInertia);
+      }
+    }
+    target = null;
+    // Suppress unused-arg warning for `e` in some lint setups
+    void e;
+  }
+
+  function onPointerCancel() {
+    active = false;
+    target = null;
+  }
+
+  window.addEventListener('pointerdown', onPointerDown, true);
+  window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+  window.addEventListener('pointerup', onPointerUp, true);
+  window.addEventListener('pointercancel', onPointerCancel, true);
+
+  return () => {
+    cancelInertia();
+    window.removeEventListener('pointerdown', onPointerDown, true);
+    window.removeEventListener('pointermove', onPointerMove, true);
+    window.removeEventListener('pointerup', onPointerUp, true);
+    window.removeEventListener('pointercancel', onPointerCancel, true);
   };
 }
 
