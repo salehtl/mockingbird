@@ -1,0 +1,30 @@
+{
+  "name": "create-mockingbird",
+  "version": "0.1.0",
+  "description": "Scaffold a new mockingbird prototype project",
+  "type": "module",
+  "bin": {
+    "create-mockingbird": "./bin.mjs"
+  },
+  "files": [
+    "bin.mjs",
+    "README.md"
+  ],
+  "keywords": [
+    "scaffold",
+    "template",
+    "prototype",
+    "device-mockup",
+    "create"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salehtl/mockingbird.git",
+    "directory": "tooling/create-mockingbird"
+  },
+  "homepage": "https://github.com/salehtl/mockingbird",
+  "engines": {
+    "node": ">=18"
+  }
+}

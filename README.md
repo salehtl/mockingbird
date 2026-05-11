@@ -16,9 +16,13 @@ Built around a Chrome-devtools-style **device-mockup viewer** so you can see you
 ## Getting started
 
 ```bash
+bun create mockingbird my-app
+cd my-app
 bun install
 bun dev
 ```
+
+Or clone this repo directly and use it as a template via the **Use this template** button on GitHub.
 
 Open <http://localhost:5173>. You'll see the viewer with the prototype iframed inside an iPhone 15 Pro frame.
 
