@@ -132,6 +132,7 @@ function installDragToScroll(): () => void {
   function stepInertia() {
     if (Math.abs(vx) < MIN_VELOCITY && Math.abs(vy) < MIN_VELOCITY) {
       rafId = 0;
+      target = null;
       return;
     }
     applyScroll(vx, vy);
@@ -145,6 +146,7 @@ function installDragToScroll(): () => void {
       cancelAnimationFrame(rafId);
       rafId = 0;
     }
+    vx = vy = 0;
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -218,7 +220,8 @@ function installDragToScroll(): () => void {
         rafId = requestAnimationFrame(stepInertia);
       }
     }
-    target = null;
+    // Keep `target` set: stepInertia uses it across frames.
+    // It is replaced on the next pointerdown, or cleared by cancelInertia/cleanup.
     samples = [];
   }
 
