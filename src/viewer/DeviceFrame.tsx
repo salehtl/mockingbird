@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ViewerState } from './useViewerState';
+import { DeviceChrome } from './DeviceChrome';
+import { chromeOuterSize, type ChromeKind } from './chrome';
 
 type Props = {
   state: ViewerState;
 };
 
-const FRAME_PADDING = 32;
+const FRAME_PADDING = 40;
 
 export function DeviceFrame({ state }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -22,18 +24,21 @@ export function DeviceFrame({ state }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const { renderW, renderH, zoom } = state;
+  const { renderW, renderH, zoom, rot } = state;
+  const chromeKind: ChromeKind = state.device?.chrome ?? 'none';
+  const rotated = rot === 1;
+
+  const { w: outerW, h: outerH } = chromeOuterSize(chromeKind, renderW, renderH, rotated);
 
   const effectiveZoom =
     zoom === 'fit'
       ? Math.min(
           1,
-          (containerSize.w - FRAME_PADDING * 2) / renderW,
-          (containerSize.h - FRAME_PADDING * 2) / renderH,
+          (containerSize.w - FRAME_PADDING * 2) / outerW,
+          (containerSize.h - FRAME_PADDING * 2) / outerH,
         )
       : zoom;
 
-  // Avoid 0/NaN before first measure
   const safeZoom = Number.isFinite(effectiveZoom) && effectiveZoom > 0 ? effectiveZoom : 1;
 
   return (
@@ -43,21 +48,27 @@ export function DeviceFrame({ state }: Props) {
     >
       <div
         style={{
-          width: renderW * safeZoom,
-          height: renderH * safeZoom,
+          width: outerW * safeZoom,
+          height: outerH * safeZoom,
         }}
         className="relative"
       >
         <div
           style={{
-            width: renderW,
-            height: renderH,
+            width: outerW,
+            height: outerH,
             transform: `scale(${safeZoom})`,
             transformOrigin: 'top left',
           }}
-          className="overflow-hidden rounded-[20px] border border-zinc-700/70 bg-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] ring-1 ring-black/40"
         >
-          <PrototypeIframe touch={state.touch} />
+          <DeviceChrome
+            kind={chromeKind}
+            rotated={rotated}
+            viewportW={renderW}
+            viewportH={renderH}
+          >
+            <PrototypeIframe touch={state.touch} />
+          </DeviceChrome>
         </div>
       </div>
       <ZoomBadge zoom={safeZoom} renderW={renderW} renderH={renderH} />
@@ -69,7 +80,6 @@ function PrototypeIframe({ touch }: { touch: boolean }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
 
-  // Push touch state into the iframe whenever it changes (or on load).
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe || !loaded) return;
