@@ -85,10 +85,15 @@ function installVisuals() {
 /* -------------------------------------------------------------------------- */
 
 const DRAG_THRESHOLD = 5;
-const FRICTION = 0.93;
-const MIN_VELOCITY = 0.4;
+// 0.96 per frame ≈ ~1.2s glide from a normal flick. Closer to 1 = more mass.
+const FRICTION = 0.96;
+const MIN_VELOCITY = 0.08;
+// Window over which the release-velocity is averaged. iOS uses ~100ms.
+const VELOCITY_WINDOW_MS = 100;
 // Form controls should still work as buttons even in touch mode.
 const PASSTHROUGH = 'input, textarea, select, button, a, label, [contenteditable="true"], [data-no-drag]';
+
+type Sample = { x: number; y: number; t: number };
 
 function installDragToScroll(): () => void {
   let active = false;
@@ -97,9 +102,9 @@ function installDragToScroll(): () => void {
   let startY = 0;
   let lastX = 0;
   let lastY = 0;
-  let lastT = 0;
   let vx = 0;
   let vy = 0;
+  let samples: Sample[] = [];
   let target: Element | Window | null = null;
   let rafId = 0;
 
@@ -152,8 +157,8 @@ function installDragToScroll(): () => void {
     exceeded = false;
     startX = lastX = e.clientX;
     startY = lastY = e.clientY;
-    lastT = e.timeStamp;
     vx = vy = 0;
+    samples = [{ x: e.clientX, y: e.clientY, t: e.timeStamp }];
     target = findScrollable(t);
   }
 
@@ -161,10 +166,8 @@ function installDragToScroll(): () => void {
     if (!active) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
-    const dt = Math.max(1, e.timeStamp - lastT);
     lastX = e.clientX;
     lastY = e.clientY;
-    lastT = e.timeStamp;
 
     if (!exceeded && (Math.abs(e.clientX - startX) > DRAG_THRESHOLD || Math.abs(e.clientY - startY) > DRAG_THRESHOLD)) {
       exceeded = true;
@@ -172,37 +175,57 @@ function installDragToScroll(): () => void {
 
     if (exceeded) {
       applyScroll(dx, dy);
-      // px-per-frame velocity (assume 60fps frame = 16ms)
-      vx = (dx / dt) * 16;
-      vy = (dy / dt) * 16;
+      samples.push({ x: e.clientX, y: e.clientY, t: e.timeStamp });
+      // Drop samples older than the velocity window.
+      const cutoff = e.timeStamp - VELOCITY_WINDOW_MS;
+      while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
       e.preventDefault();
     }
+  }
+
+  function computeReleaseVelocity(now: number): { vx: number; vy: number } {
+    // Average velocity over the last VELOCITY_WINDOW_MS of movement.
+    // If the pointer paused before release, the recent samples will be near-stationary
+    // and we'll correctly return ~0 — matching iOS "lift to stop" behavior.
+    const cutoff = now - VELOCITY_WINDOW_MS;
+    const recent = samples.filter((s) => s.t >= cutoff);
+    if (recent.length < 2) return { vx: 0, vy: 0 };
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    const dt = Math.max(1, last.t - first.t);
+    // px-per-frame at 60fps
+    return {
+      vx: ((last.x - first.x) / dt) * 16,
+      vy: ((last.y - first.y) / dt) * 16,
+    };
   }
 
   function onPointerUp(e: PointerEvent) {
     if (!active) return;
     active = false;
     if (exceeded) {
-      // swallow the synthetic click that follows
       const swallow = (ev: Event) => {
         ev.stopPropagation();
         ev.preventDefault();
         window.removeEventListener('click', swallow, true);
       };
       window.addEventListener('click', swallow, true);
-      // begin inertia if there's meaningful velocity
+
+      const v = computeReleaseVelocity(e.timeStamp);
+      vx = v.vx;
+      vy = v.vy;
       if (Math.abs(vx) > MIN_VELOCITY || Math.abs(vy) > MIN_VELOCITY) {
         rafId = requestAnimationFrame(stepInertia);
       }
     }
     target = null;
-    // Suppress unused-arg warning for `e` in some lint setups
-    void e;
+    samples = [];
   }
 
   function onPointerCancel() {
     active = false;
     target = null;
+    samples = [];
   }
 
   window.addEventListener('pointerdown', onPointerDown, true);
